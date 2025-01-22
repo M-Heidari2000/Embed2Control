@@ -26,26 +26,32 @@ class RSAgent:
     def __call__(self, obs):
 
         # convert o_t to a torch tensor and add a batch dimension
-        obs = torch.as_tensor(obs, device=self.device).unsqueeze(0)
+        obs = torch.as_tensor(obs, device=self.device).repeat(self.num_candidates, 1)
 
         # no learning takes place here
         with torch.no_grad():
+            self.encoder.eval()
+            self.transition_model.eval()
+
             state_dist = self.encoder(obs)
 
             action_dist = Uniform(
-                low=-torch.ones((self.planning_horizon, self.posterior_model.action_dim), device=self.device),
-                high=torch.ones((self.planning_horizon, self.posterior_model.action_dim),device=self.device),
+                low=-torch.ones((self.planning_horizon, self.transition_model.action_dim), device=self.device),
+                high=torch.ones((self.planning_horizon, self.transition_model.action_dim),device=self.device),
             )
 
             action_candidates = action_dist.sample([self.num_candidates])
             action_candidates = einops.rearrange(action_candidates, "n h a -> h n a")
 
-            state = state_dist.sample([self.num_candidates]).squeeze(-2)
+            state = state_dist.sample()
             total_predicted_reward = torch.zeros(self.num_candidates, device=self.device)
 
             # start generating trajectories starting from s_t using transition model
             for t in range(self.planning_horizon):
-                total_predicted_reward += self.cost_function(state=state).squeeze()
+                total_predicted_reward += self.cost_function(
+                    state=state,
+                    action=action_candidates[t],
+                ).squeeze()
                 # get next state from our prior (transition model)
                 state_dist = self.transition_model(
                     state,

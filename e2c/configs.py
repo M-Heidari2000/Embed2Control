@@ -7,7 +7,9 @@ class TrainConfig:
     test_interval: int = 10
     action_repeat: int = 1
     state_dim: int = 30
-    min_std: float = 1e-2
+    hidden_dim: int = 32
+    min_var: float = 1e-2
+    dropout_p: float = 0.01
     buffer_capacity: int = 1000000
     all_episodes: int = 1000
     seed_episodes: int = 5

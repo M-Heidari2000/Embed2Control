@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import Optional
-from torch.distributions import Normal
+from torch.distributions import MultivariateNormal
 import einops
 
 
@@ -15,7 +15,7 @@ class Encoder(nn.Module):
         observation_dim: int,
         state_dim: int,
         hidden_dim: Optional[int]=None,
-        min_std: Optional[float]=1e-3,
+        min_var: Optional[float]=1e-3,
         dropout_p: Optional[float]=0.4,
     ):
         super().__init__()
@@ -32,19 +32,19 @@ class Encoder(nn.Module):
         )
 
         self.mean_head = nn.Linear(hidden_dim, state_dim)
-        self.std_head = nn.Sequential(
+        self.var_head = nn.Sequential(
             nn.Linear(hidden_dim, state_dim),
             nn.Softplus(),
         )
 
-        self._min_std = min_std
+        self._min_var = min_var
 
     def forward(self, observation):
         hidden = self.mlp_layers(observation)
         mean = self.mean_head(hidden)
-        std = self.std_head(hidden) + self._min_std
+        var = self.var_head(hidden) + self._min_var
 
-        return Normal(mean, std)
+        return MultivariateNormal(mean, torch.diag_embed(var))
     
 
 class Decoder(nn.Module):
@@ -89,8 +89,8 @@ class TransitionModel(nn.Module):
         self,
         state_dim: int,
         action_dim: int,
-        hidden_dim: Optional[int],
-        min_std: Optional[float]=1e-3,
+        hidden_dim: Optional[int]=None,
+        min_var: Optional[float]=1e-3,
         dropout_p: Optional[float]=0.4,
     ):
         
@@ -125,7 +125,7 @@ class TransitionModel(nn.Module):
             nn.Softplus(),
         )
 
-        self._min_std = min_std
+        self._min_var = min_var
 
     def forward(
         self,
@@ -143,9 +143,9 @@ class TransitionModel(nn.Module):
             torch.eye(self.state_dim, device=state_sample.device).repeat(r.shape[0], 1, 1) + torch.bmm(v, r)
         )
         B = self.B_head(hidden)
-        B = einops.rearrange(B, "b (s u) -> b s u", s=self.state_dim, u=self.action_dim)
+        B = einops.rearrange(B, "b (s a) -> b s a", s=self.state_dim, a=self.action_dim)
         o = self.o_head(hidden)
-        w = self.w_head(hidden) + self._min_std
+        w = self.w_head(hidden) + self._min_var
 
         # at this point 
         # A: b * s * s
@@ -154,20 +154,20 @@ class TransitionModel(nn.Module):
         
         # next state mean computation
         mu = einops.rearrange(state_dist.loc, "b s -> b s 1")
-        action = einops.rearrange(action, "b u -> b u 1")
+        action = einops.rearrange(action, "b a -> b a 1")
         o = einops.rearrange(o, "b s -> b s 1")
         next_state_mean = torch.bmm(A, mu) + torch.bmm(B, action) + o
         next_state_mean = einops.rearrange(next_state_mean, "b s 1 -> b s")
 
         # next state covariance computation
-        H = torch.diag_embed(w ** 2)    # b * s * s
-        sigma = torch.diag_embed(state_dist.scale ** 2)    # b * s * s
+        H = torch.diag_embed(w)    # b * s * s
+        sigma = state_dist.covariance_matrix    # b * s * s
+
         C = H + torch.bmm(
             torch.bmm(A, sigma),
             A.transpose(1, 2)
         )
-        next_state_std = torch.sqrt(C.diagonal(dim1=1, dim2=2) + self._min_std)    # b * s
 
-        next_state_dist = Normal(next_state_mean, next_state_std)
+        next_state_dist = MultivariateNormal(next_state_mean, C)
 
         return next_state_dist

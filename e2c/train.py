@@ -19,7 +19,7 @@ from .models import (
     TransitionModel,
 )
 from .cost_functions import Quadratic
-from torch.distributions import Normal
+from torch.distributions import MultivariateNormal
 
 
 def train(
@@ -54,18 +54,24 @@ def train(
     encoder = Encoder(
         state_dim=config.state_dim,
         observation_dim=env.observation_space.shape[0],
-        min_std=config.min_std,
+        hidden_dim=config.hidden_dim,
+        min_var=config.min_var,
+        dropout_p=config.dropout_p,
     ).to(device)
 
     decoder = Decoder(
         state_dim=config.state_dim,
         observation_dim=env.observation_space.shape[0],
-    )
+        hidden_dim=config.hidden_dim,
+        dropout_p=config.dropout_p,
+    ).to(device)
 
     transition_model = TransitionModel(
         state_dim=config.state_dim,
         action_dim=env.action_space.shape[0],
-        min_std=config.min_std,
+        hidden_dim=config.hidden_dim,
+        min_var=config.min_var,
+        dropout_p=config.dropout_p,
     ).to(device)
 
     all_params = (
@@ -94,52 +100,11 @@ def train(
     # main training loop
     for episode in range(config.seed_episodes, config.all_episodes):
 
-        obs_target = torch.as_tensor(env.manifold(env.target).T, device=device, dtype=torch.float32)
-        state_target = encoder(obs_target)
-
-        cost_function = Quadratic(
-            Q=env.Q,
-            R=env.R,
-            target=state_target,
-        )
-        
-        agent = RSAgent(
-            encoder=encoder,
-            transition_model=transition_model,
-            cost_function=cost_function,
-        )
-
-        # collect experience
-        start = time.time()
-        obs, _ = env.reset()
-        done = False
-        total_reward = 0
-        while not done:
-            actions = agent(obs=obs)
-            action = actions[0]
-            action += np.random.normal(
-                0,
-                np.sqrt(config.action_noise_var),
-                env.action_space.shape[0],
-            )
-            action.clip(min=env.action_space.low, max=env.action_space.high)
-            next_obs, reward, terminated, truncated, _ = env.step(action)
-            total_reward += reward
-            done = terminated or truncated
-            replay_buffer.push(
-                observation=obs,
-                action=action,
-                next_observation=next_obs
-            )
-            obs = next_obs
-
-
-        writer.add_scalar('total reward at train', total_reward, episode)
-        print('episode [%4d/%4d] is collected. Total reward is %f' %
-              (episode+1, config.all_episodes, total_reward))
-        print('elasped time for interaction: %.2fs' % (time.time() - start))
-
         # update model parameters
+        encoder.train()
+        decoder.train()
+        transition_model.train()
+
         start = time.time()
         for update_step in range(config.collect_interval):
             observations, actions, next_observations = replay_buffer.sample(
@@ -150,9 +115,9 @@ def train(
             actions = torch.as_tensor(actions, device=device)
             next_observations = torch.as_tensor(next_observations, device=device)
 
-            priors = Normal(
+            priors = MultivariateNormal(
                 torch.zeros((config.batch_size, config.state_dim), device=device, dtype=torch.float32),
-                torch.ones((config.batch_size, config.state_dim), device=device, dtype=torch.float32),
+                torch.diag_embed(torch.ones((config.batch_size, config.state_dim), device=device, dtype=torch.float32)),
             )
             posteriors = encoder(observations)
             posterior_samples = posteriors.rsample()
@@ -164,10 +129,10 @@ def train(
             next_prior_samples = next_priors.rsample()
             next_posteriors = encoder(next_observations)
 
-            kl = kl_divergence(posteriors, priors).sum(dim=1)
+            kl = kl_divergence(posteriors, priors)
             kl_loss = kl.clamp(min=config.free_nats).mean()
 
-            next_kl = kl_divergence(next_posteriors, next_priors).sum(dim=1)
+            next_kl = kl_divergence(next_posteriors, next_priors)
             next_kl_loss = next_kl.clamp(min=config.free_nats).mean()
 
             recon_observations = decoder(posterior_samples)
@@ -205,13 +170,62 @@ def train(
         
         print('elasped time for update: %.2fs' % (time.time() - start))
 
+        # collect experience
+        with torch.no_grad():
+            encoder.eval()
+            obs_target = torch.as_tensor(env.manifold(env.target).T, device=device, dtype=torch.float32)
+            state_target = encoder(obs_target).loc
+
+            cost_function = Quadratic(
+                Q=torch.eye(config.state_dim, device=device, dtype=torch.float32),
+                R=torch.eye(env.action_space.shape[0], device=device, dtype=torch.float32),
+                target=state_target,
+                device=device,
+            )
+        
+        agent = RSAgent(
+            encoder=encoder,
+            transition_model=transition_model,
+            cost_function=cost_function,
+            planning_horizon=config.planning_horizon,
+            num_candidates=config.num_candidates,
+        )
+        start = time.time()
+        obs, _ = env.reset()
+        done = False
+        total_reward = 0
+        while not done:
+            actions = agent(obs=obs)
+            action = actions[0]
+            action += np.random.normal(
+                0,
+                np.sqrt(config.action_noise_var),
+                env.action_space.shape[0],
+            )
+            action.clip(min=env.action_space.low, max=env.action_space.high)
+            next_obs, reward, terminated, truncated, _ = env.step(action)
+            total_reward += reward
+            done = terminated or truncated
+            replay_buffer.push(
+                observation=obs,
+                action=action,
+                next_observation=next_obs
+            )
+            obs = next_obs
+
+
+        writer.add_scalar('total reward at train', total_reward, episode)
+        print('episode [%4d/%4d] is collected. Total reward is %f' %
+              (episode+1, config.all_episodes, total_reward))
+        print('elasped time for interaction: %.2fs' % (time.time() - start))
+
         # test without exploration noise
         if (episode + 1) % config.test_interval == 0:
             obs, _ = env.reset()
             done = False
             total_reward = 0
             while not done:
-                actions, _ = agent(obs=obs)
+                actions = agent(obs=obs)
                 action = actions[0]
                 next_obs, reward, terminated, truncated, _ = env.step(action)
                 total_reward += reward
