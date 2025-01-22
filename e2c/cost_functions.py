@@ -28,5 +28,5 @@ class Quadratic:
         state = torch.as_tensor(state, device=self.device, dtype=torch.float32)
         action = torch.as_tensor(action, device=self.device, dtype=torch.float32)
 
-        cost = (state - self.target) @ self.Q @ (state - self.target).T + action @ self.R @ action.T
+        cost = 0.5 * (state - self.target) @ self.Q @ (state - self.target).T + 0.5 * action @ self.R @ action.T
         return cost.diag()
