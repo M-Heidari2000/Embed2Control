@@ -4,7 +4,7 @@ import torch
 class Quadratic:
 
     """
-        c(x, u) = 0.5 * (x-x*).T @ Q @ (x-x*) + 0.5 * u.T @ R @ u
+        c(x, u) = 0.5 * (x-x*).T @ Q @ (x-x*) + 0.5 * a.T @ R @ a
     """
 
     def __init__(self, Q, R, target, device: str="cpu"):
@@ -21,6 +21,10 @@ class Quadratic:
 
     
     def __call__(self, state, action):
+        """
+            state: b * s
+            action: b * a
+        """
         state = torch.as_tensor(state, device=self.device, dtype=torch.float32)
         action = torch.as_tensor(action, device=self.device, dtype=torch.float32)
 
