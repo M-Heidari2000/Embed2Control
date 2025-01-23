@@ -61,7 +61,7 @@ class RSAgent:
                 state = state_dist.sample()
 
             # find the best action sequence
-            max_index = total_predicted_reward.argmax()
-            actions = action_candidates[:, max_index, :]
+            min_index = total_predicted_reward.argmin()
+            actions = action_candidates[:, min_index, :]
 
         return actions.cpu().numpy()

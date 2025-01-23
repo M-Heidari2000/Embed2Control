@@ -111,8 +111,14 @@ class TransitionModel(nn.Module):
         )
 
         # A = I + v @ r.T
-        self.v_head = nn.Linear(hidden_dim, state_dim)
-        self.r_head = nn.Linear(hidden_dim, state_dim)
+        self.v_head = nn.Sequential(
+            nn.Linear(hidden_dim, state_dim),
+            nn.Tanh(),
+        )
+        self.r_head = nn.Sequential(
+            nn.Linear(hidden_dim, state_dim),
+            nn.Tanh(),
+        )
 
         self.B_head = nn.Linear(hidden_dim, state_dim * action_dim)
 
@@ -140,7 +146,8 @@ class TransitionModel(nn.Module):
         r = self.r_head(hidden)
         r = einops.rearrange(r, "b s -> b 1 s")
         A = (
-            torch.eye(self.state_dim, device=state_sample.device).repeat(r.shape[0], 1, 1) + torch.bmm(v, r)
+            torch.eye(self.state_dim, device=state_sample.device).repeat(r.shape[0], 1, 1)
+            + torch.bmm(v, r)
         )
         B = self.B_head(hidden)
         B = einops.rearrange(B, "b (s a) -> b s a", s=self.state_dim, a=self.action_dim)
@@ -167,6 +174,22 @@ class TransitionModel(nn.Module):
             torch.bmm(A, sigma),
             A.transpose(1, 2)
         )
+        
+        for i, c in enumerate(C):
+            try:
+                torch.linalg.cholesky(c)
+            except:
+                print("c: ")
+                print(c)
+                print()
+                print("H: ")
+                print(H[i])
+                print()
+                print("A: ")
+                print(A[i])
+                print()
+                print("sigma: ")
+                print(sigma[i])
 
         next_state_dist = MultivariateNormal(next_state_mean, C)
 

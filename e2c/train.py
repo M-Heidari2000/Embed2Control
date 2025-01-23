@@ -16,6 +16,7 @@ from .models import (
     Decoder,
     TransitionModel,
 )
+from tqdm import tqdm
 from torch.distributions import MultivariateNormal
 
 
@@ -80,7 +81,8 @@ def train(
     optimizer = torch.optim.Adam(all_params, lr=config.lr, eps=config.eps)
 
     # collect initial experience with random actions
-    for episode in range(config.num_episodes):
+    print("collecting data")
+    for episode in tqdm(range(config.num_episodes)):
         obs, _ = env.reset()
         done = False
         while not done:
