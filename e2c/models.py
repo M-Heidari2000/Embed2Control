@@ -193,4 +193,4 @@ class TransitionModel(nn.Module):
 
         next_state_dist = MultivariateNormal(next_state_mean, C)
 
-        return next_state_dist
+        return next_state_dist, A, B, o

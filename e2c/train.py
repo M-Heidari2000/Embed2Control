@@ -116,7 +116,7 @@ def train(
         )
         posteriors = encoder(observations)
         posterior_samples = posteriors.rsample()
-        next_priors = transition_model(
+        next_priors, _, _, _ = transition_model(
             state_sample=posterior_samples,
             action=actions,
             state_dist=posteriors
