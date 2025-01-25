@@ -78,12 +78,14 @@ class ILQRAgent:
         cost_function,
         planning_horizon: int,
         num_iterations: int,
+        sample: bool=True,
     ):
         self.encoder = encoder
         self.transition_model = transition_model
         self.cost_function = cost_function
         self.num_iterations = num_iterations
         self.planning_horizon = planning_horizon
+        self.sample = sample
 
         self.device = next(encoder.parameters()).device
 
@@ -99,6 +101,7 @@ class ILQRAgent:
 
             target = self.cost_function.target
 
+            # initial policy (zero actions)
             Ks = [
                 torch.zeros(
                     (self.transition_model.action_dim, self.transition_model.state_dim),
@@ -114,6 +117,8 @@ class ILQRAgent:
                     dtype=torch.float32,
                 )
             ] * self.planning_horizon
+            state_dist = self.encoder(obs)
+            print("initial state: ", state_dist.loc)
 
             for _ in range(self.num_iterations + 1):
                 state_dist = self.encoder(obs)
@@ -128,7 +133,7 @@ class ILQRAgent:
                 )
                 # rollout a trajectory with current policy
                 for t in range(self.planning_horizon):
-                    state = state_dist.sample()
+                    state = state_dist.sample() if self.sample else state_dist.loc
                     action = (state - target) @ Ks[t].T + ks[t].T
                     actions[t] = action
                     state_dist, A, B, o = self.transition_model(
@@ -146,7 +151,9 @@ class ILQRAgent:
                     os=os,
                     cost_function=self.cost_function,
                 )
-    
+
+        print("final state: ", state)
+        print("="*100)
         return actions.cpu().numpy()
     
     def _compute_policy(self, As, Bs, os, cost_function):
