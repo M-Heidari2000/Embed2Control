@@ -19,6 +19,7 @@ class SwissRoll(gym.Env):
         No=None,
         render_mode: str=None,
         horizon: int= 1000,
+        heatmap_steps: float=0.1,
     ):
         # Verify parameters' shapes
         assert A.shape == (2, 2)
@@ -53,7 +54,7 @@ class SwissRoll(gym.Env):
 
         self.state_space = spaces.Box(
             low=np.array([0, -4.0]),
-            high=np.array([2*np.pi, 4.0]),
+            high=np.array([2*np.pi, 4.0-1e-3]),
             shape=(2, ),
             dtype=np.float32,
         )
@@ -73,6 +74,11 @@ class SwissRoll(gym.Env):
         )
 
         self.target = (0.5 * (self.state_space.low + self.state_space.high)).reshape(-1, 1)
+
+        self.heatmap_steps = heatmap_steps
+        self._heatmap = np.zeros(
+            np.ceil((self.state_space.high - self.state_space.low) / self.heatmap_steps).astype(np.int32),
+        )
 
     def manifold(self, s):
         assert s.shape[0] == 2
@@ -123,6 +129,12 @@ class SwissRoll(gym.Env):
         assert action.shape == self.action_space.shape
         action = action.astype(np.float32).reshape(-1, 1)
 
+        # Update heatmap
+        state_idx = tuple(
+            np.floor((self._state.flatten() - self.state_space.low) / self.heatmap_steps).astype(np.int32)
+        )
+        self._heatmap[state_idx] += 1
+
         # Calculate reward for current state and action
         reward = -((self._state - self.target).T @ self.Q @ (self._state - self.target)) - (action.T @ self.R @ action)
 
@@ -154,3 +166,10 @@ class SwissRoll(gym.Env):
 
     def render(self):
         pass
+
+    def reset_heatmap(self):
+        self._heatmap = self._heatmap * 0
+
+    def get_heatmap(self):
+        heatmap = self._heatmap.T[::-1, :]
+        return heatmap
