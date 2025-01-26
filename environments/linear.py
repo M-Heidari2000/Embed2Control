@@ -145,7 +145,6 @@ class Linear(gym.Env):
         valid_state = (
             np.all(self.state_space.low < self._state.flatten()) and np.all(self._state.flatten() < self.state_space.high)
         )
-
         terminated = not valid_state
         
         self._step += 1

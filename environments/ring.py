@@ -21,6 +21,7 @@ class Ring(gym.Env):
         action_hi: float=1.0,
         render_mode: str=None,
         horizon: int= 1000,
+        heatmap_steps: float=0.1,
     ):
         # Verify parameters' shapes
         assert A.shape == (1, 1)
@@ -55,7 +56,7 @@ class Ring(gym.Env):
 
         self.state_space = spaces.Box(
             low=np.array([0]),
-            high=np.array([2*np.pi]),
+            high=np.array([2*np.pi-1e-3]),
             shape=(1, ),
             dtype=np.float32,
         )
@@ -75,6 +76,11 @@ class Ring(gym.Env):
         )
 
         self.target = (0.5 * (self.state_space.low + self.state_space.high)).reshape(-1, 1)
+
+        self.heatmap_steps = heatmap_steps
+        self._heatmap = np.zeros(
+            np.ceil((self.state_space.high - self.state_space.low) / self.heatmap_steps).astype(np.int32),
+        )
 
     def manifold(self, s):
         assert s.shape[0] == 1
@@ -125,6 +131,12 @@ class Ring(gym.Env):
         assert action.shape == self.action_space.shape
         action = action.astype(np.float32).reshape(-1, 1)
 
+        # Update heatmap
+        state_idx = tuple(
+            np.floor((self._state.flatten() - self.state_space.low) / self.heatmap_steps).astype(np.int32)
+        )
+        self._heatmap[state_idx] += 1
+
         # Calculate reward for current state and action
         reward = -((self._state - self.target).T @ self.Q @ (self._state - self.target)) - (action.T @ self.R @ action)
 
@@ -137,18 +149,15 @@ class Ring(gym.Env):
             ).astype(np.float32).reshape(-1, 1)
             self._state = self._state + ns
 
-        self._state = np.clip(
-            a=self._state,
-            a_min=self.state_space.low.reshape(-1, 1),
-            a_max=self.state_space.high.reshape(-1, 1),
+        valid_state = (
+            np.all(self.state_space.low < self._state.flatten()) and np.all(self._state.flatten() < self.state_space.high)
         )
+        terminated = not valid_state
         
         self._step += 1
         
         info = {"state": self._state.copy().flatten()}
         truncated = bool(self._step >= self.horizon)
-        # In this env, episodes never terminate
-        terminated = False
         reward = reward.item()
         obs = self._get_obs().flatten()
 
@@ -156,3 +165,9 @@ class Ring(gym.Env):
 
     def render(self):
         pass
+
+    def reset_heatmap(self):
+        self._heatmap = self._heatmap * 0
+
+    def get_heatmap(self):
+        return self._heatmap
