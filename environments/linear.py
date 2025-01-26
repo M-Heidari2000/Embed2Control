@@ -142,18 +142,16 @@ class Linear(gym.Env):
             ).astype(np.float32).reshape(-1, 1)
             self._state = self._state + ns
 
-        self._state = np.clip(
-            a=self._state,
-            a_min=self.state_space.low.reshape(-1, 1),
-            a_max=self.state_space.high.reshape(-1, 1),
+        valid_state = (
+            np.all(self.state_space.low < self._state.flatten()) and np.all(self._state.flatten() < self.state_space.high)
         )
+
+        terminated = not valid_state
         
         self._step += 1
         
         info = {"state": self._state.copy().flatten()}
         truncated = bool(self._step >= self.horizon)
-        # In this env, episodes never terminate
-        terminated = False
         reward = reward.item()
         obs = self._get_obs().flatten()
 

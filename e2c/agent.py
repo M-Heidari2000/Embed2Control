@@ -118,7 +118,6 @@ class ILQRAgent:
                 )
             ] * self.planning_horizon
             state_dist = self.encoder(obs)
-            print("initial state: ", state_dist.loc)
 
             for _ in range(self.num_iterations + 1):
                 state_dist = self.encoder(obs)
@@ -152,8 +151,6 @@ class ILQRAgent:
                     cost_function=self.cost_function,
                 )
 
-        print("final state: ", state)
-        print("="*100)
         return actions.cpu().numpy()
     
     def _compute_policy(self, As, Bs, os, cost_function):
