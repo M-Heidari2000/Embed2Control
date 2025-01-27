@@ -60,8 +60,8 @@ class SwissRoll(gym.Env):
         )
 
         self.action_space = spaces.Box(
-            low=-1,
-            high=1,
+            low=-1.0,
+            high=1.0,
             shape=(self.action_dim, ),
             dtype=np.float32,
         )

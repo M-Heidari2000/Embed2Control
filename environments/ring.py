@@ -17,8 +17,6 @@ class Ring(gym.Env):
         R,
         Ns=None,
         No=None,
-        action_lo: float=-1.0,
-        action_hi: float=1.0,
         render_mode: str=None,
         horizon: int= 1000,
         heatmap_steps: float=0.1,
@@ -62,8 +60,8 @@ class Ring(gym.Env):
         )
 
         self.action_space = spaces.Box(
-            low=action_lo,
-            high=action_hi,
+            low=-1.0,
+            high=1.0,
             shape=(self.action_dim, ),
             dtype=np.float32,
         )
