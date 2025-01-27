@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import einops
 from torch.distributions import Uniform
@@ -151,7 +152,7 @@ class ILQRAgent:
                     cost_function=self.cost_function,
                 )
 
-        return actions.cpu().numpy()
+        return np.clip(actions.cpu().numpy(), min=-1.0, max=1.0)
     
     def _compute_policy(self, As, Bs, os, cost_function):
         state_dim, action_dim = Bs[0].shape
