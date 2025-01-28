@@ -112,7 +112,6 @@ while not done:
     frames.append(env.render())
     planned_actions = agent(obs=obs)
     action = planned_actions[0]
-    action = action.clip(min=env.action_space.low, max=env.action_space.high)
     obs, reward, terminated, truncated, info = env.step(action)
     total_reward += reward
     done = terminated or truncated
