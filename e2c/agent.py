@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import einops
-from torch.distributions import Uniform
+from torch.distributions import Uniform, Normal
 
 
 class RSAgent:
@@ -70,6 +70,82 @@ class RSAgent:
         return actions.cpu().numpy()
     
 
+class CEMAgent:
+    """
+        action planning by Cross Entropy Method
+    """
+    def __init__(
+        self,
+        encoder,
+        transition_model,
+        cost_function,
+        planning_horizon: int,
+        num_iterations: int,
+        num_candidates: int,
+        num_elites: int,
+        sample: bool=True,
+    ):
+        self.encoder = encoder
+        self.transition_model = transition_model
+        self.cost_function = cost_function
+        self.num_candidates = num_candidates
+        self.planning_horizon = planning_horizon
+        self.num_iterations = num_iterations
+        self.num_elites = num_elites
+        self.sample = sample
+
+        self.device = next(encoder.parameters()).device
+
+    def __call__(self, obs):
+
+        # convert o_t to a torch tensor and add a batch dimension
+        obs = torch.as_tensor(obs, device=self.device).repeat(self.num_candidates, 1)
+
+        # no learning takes place here
+        with torch.no_grad():
+            self.encoder.eval()
+            self.transition_model.eval()
+
+            action_dist = Normal(
+                loc=torch.zeros((self.planning_horizon, self.transition_model.action_dim), device=self.device),
+                scale=torch.ones((self.planning_horizon, self.transition_model.action_dim),device=self.device),
+            )
+
+            for _ in range(self.num_iterations):
+                state_dist = self.encoder(obs)
+
+                action_candidates = action_dist.sample([self.num_candidates])
+                action_candidates = einops.rearrange(action_candidates, "n h a -> h n a")
+
+                state = state_dist.sample() if self.sample else state_dist.loc
+                total_predicted_reward = torch.zeros(self.num_candidates, device=self.device)
+
+                # start generating trajectories starting from s_t using transition model
+                for t in range(self.planning_horizon):
+                    total_predicted_reward += self.cost_function(
+                        state=state,
+                        action=torch.tanh(action_candidates[t]),
+                    ).squeeze()
+                    # get next state from our prior (transition model)
+                    state_dist, _, _, _ = self.transition_model(
+                        state,
+                        torch.tanh(action_candidates[t]),
+                        state_dist,
+                    )
+                    state = state_dist.sample() if self.sample else state_dist.loc
+
+                elite_indexes = total_predicted_reward.argsort(descending=False)[:self.num_elites]
+                elites = action_candidates[:, elite_indexes, :]
+
+                mean = elites.mean(dim=1)
+                std = elites.std(dim=1, unbiased=False)
+                action_dist = Normal(loc=mean, scale=std)
+
+            actions = torch.tanh(mean)
+
+        return actions.cpu().numpy()
+
+
 class ILQRAgent:
     """
         action planning by the IQLR method
@@ -120,7 +196,6 @@ class ILQRAgent:
                     dtype=torch.float32,
                 )
             ] * self.planning_horizon
-            state_dist = self.encoder(obs)
 
             for _ in range(self.num_iterations + 1):
                 state_dist = self.encoder(obs)
