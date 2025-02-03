@@ -167,7 +167,7 @@ class ILQRAgent:
 
         for t in range(self.planning_horizon-1, -1, -1):
             F = torch.concatenate((As[t], Bs[t]), dim=1)
-            f = os[t] + (As[t] - torch.eye(state_dim, device=self.device)) @ self.cost_function.target.T
+            f = os[t] + (As[t] - torch.eye(state_dim, device=self.device)) @ self.cost_functioncost_function.target.T
             Q = C + F.T @ V @ F
             q = c + F.T @ V @ f + F.T @ v
             Qxx = Q[:state_dim, :state_dim]
