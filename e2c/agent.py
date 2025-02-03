@@ -149,12 +149,11 @@ class ILQRAgent:
                     As=As,
                     Bs=Bs,
                     os=os,
-                    cost_function=self.cost_function,
                 )
 
         return np.clip(actions.cpu().numpy(), min=-1.0, max=1.0)
     
-    def _compute_policy(self, As, Bs, os, cost_function):
+    def _compute_policy(self, As, Bs, os):
         state_dim, action_dim = Bs[0].shape
 
         Ks = []
@@ -163,12 +162,12 @@ class ILQRAgent:
         V = torch.zeros((state_dim, state_dim), device=self.device)
         v = torch.zeros((state_dim, 1), device=self.device)
 
-        C = torch.block_diag(cost_function.Q, cost_function.R)
+        C = torch.block_diag(self.cost_function.Q, self.cost_function.R)
         c = torch.zeros((state_dim + action_dim, 1), device=self.device)
 
         for t in range(self.planning_horizon-1, -1, -1):
             F = torch.concatenate((As[t], Bs[t]), dim=1)
-            f = os[t] + (As[t] - torch.eye(state_dim, device=self.device)) @ cost_function.target.T
+            f = os[t] + (As[t] - torch.eye(state_dim, device=self.device)) @ self.cost_function.target.T
             Q = C + F.T @ V @ F
             q = c + F.T @ V @ f + F.T @ v
             Qxx = Q[:state_dim, :state_dim]
