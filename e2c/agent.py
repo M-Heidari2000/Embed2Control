@@ -15,12 +15,14 @@ class RSAgent:
         cost_function,
         planning_horizon: int,
         num_candidates: int,
+        sample: bool=True,
     ):
         self.encoder = encoder
         self.transition_model = transition_model
         self.cost_function = cost_function
         self.num_candidates = num_candidates
         self.planning_horizon = planning_horizon
+        self.sample = sample
 
         self.device = next(encoder.parameters()).device
 
@@ -44,7 +46,7 @@ class RSAgent:
             action_candidates = action_dist.sample([self.num_candidates])
             action_candidates = einops.rearrange(action_candidates, "n h a -> h n a")
 
-            state = state_dist.sample()
+            state = state_dist.sample() if self.sample else state_dist.loc
             total_predicted_reward = torch.zeros(self.num_candidates, device=self.device)
 
             # start generating trajectories starting from s_t using transition model
@@ -59,7 +61,7 @@ class RSAgent:
                     action_candidates[t],
                     state_dist,
                 )
-                state = state_dist.sample()
+                state = state_dist.sample() if self.sample else state_dist.loc
 
             # find the best action sequence
             min_index = total_predicted_reward.argmin()
