@@ -89,9 +89,9 @@ class StaticDataset(Dataset):
         action,
         next_observation,
     ):
-        self.observations[self.index] = observation
-        self.actions[self.index] = action
-        self.next_observation[self.index] = next_observation
+        self.observations[self.index] = torch.as_tensor(observation)
+        self.actions[self.index] = torch.as_tensor(action)
+        self.next_observation[self.index] = torch.as_tensor(next_observation)
 
         self.index = (self.index + 1) % self.capacity
         self.is_filled = self.is_filled or self.index == 0

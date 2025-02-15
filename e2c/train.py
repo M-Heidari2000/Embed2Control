@@ -8,8 +8,9 @@ from datetime import datetime
 from torch.distributions.kl import kl_divergence
 from torch.nn.functional import mse_loss
 from torch.nn.utils import clip_grad_norm_
+from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard.writer import SummaryWriter
-from .memory import ReplayBuffer
+from .memory import StaticDataset
 from .configs import TrainConfig
 from .models import (
     Encoder,
@@ -18,6 +19,31 @@ from .models import (
 )
 from tqdm import tqdm
 from torch.distributions import MultivariateNormal
+
+
+def collect_data(env: gym.Env, num_episodes: int):
+    dataset = StaticDataset(
+        capacity=num_episodes*env.horizon,
+        observation_dim=env.observation_space.shape[0],
+        action_dim=env.action_space.shape[0],
+    )
+
+    print("collecting data")
+    for _ in tqdm(range(num_episodes)):
+        obs, _ = env.reset()
+        done = False
+        while not done:
+            action = env.action_space.sample()
+            next_obs, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
+            dataset.push(
+                observation=obs,
+                action=action,
+                next_observation=next_obs
+            )
+            obs = next_obs
+
+    return dataset
 
 
 def train(
@@ -39,11 +65,24 @@ def train(
     if torch.cuda.is_available():
         torch.cuda.manual_seed(config.seed)
 
-    # define replay buffer
-    replay_buffer = ReplayBuffer(
-        capacity=config.buffer_capacity,
-        observation_dim=env.observation_space.shape[0],
-        action_dim=env.action_space.shape[0],
+    # create datasets
+    dataset = collect_data(env=env, num_episodes=config.num_episodes)
+    train_dataset, test_dataset = random_split(
+        dataset=dataset,
+        lengths=[1-config.test_size, config.test_size],
+    )
+
+    # create dataloaders
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=config.batch_size,
+        shuffle=True,
+    )
+
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
     )
 
     # define models and optimizer
@@ -80,85 +119,117 @@ def train(
 
     optimizer = torch.optim.Adam(all_params, lr=config.lr, eps=config.eps)
 
-    # collect initial experience with random actions
-    print("collecting data")
-    for episode in tqdm(range(config.num_episodes)):
-        obs, _ = env.reset()
-        done = False
-        while not done:
-            action = env.action_space.sample()
-            next_obs, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-            replay_buffer.push(
-                observation=obs,
-                action=action,
-                next_observation=next_obs
-            )
-            obs = next_obs
-    
-    # update model parameters
-    encoder.train()
-    decoder.train()
-    transition_model.train()
-
     for epoch in range(config.num_epochs):
-        observations, actions, next_observations = replay_buffer.sample(
-            batch_size=config.batch_size,
-        )
+        # train
+        encoder.train()
+        decoder.train()
+        transition_model.train()
+        for batch, observations, actions, next_observations in enumerate(train_dataloader):
 
-        observations = torch.as_tensor(observations, device=device)
-        actions = torch.as_tensor(actions, device=device)
-        next_observations = torch.as_tensor(next_observations, device=device)
+            observations = observations.to(device)
+            actions = actions.to(device)
+            next_observations = next_observations.to(device)
 
-        priors = MultivariateNormal(
-            torch.zeros((config.batch_size, config.state_dim), device=device, dtype=torch.float32),
-            torch.diag_embed(torch.ones((config.batch_size, config.state_dim), device=device, dtype=torch.float32)),
-        )
-        posteriors = encoder(observations)
-        posterior_samples = posteriors.rsample()
-        next_priors, _, _, _ = transition_model(
-            state_sample=posterior_samples,
-            action=actions,
-            state_dist=posteriors
-        )
-        next_prior_samples = next_priors.rsample()
-        next_posteriors = encoder(next_observations)
+            priors = MultivariateNormal(
+                torch.zeros((config.batch_size, config.state_dim), device=device, dtype=torch.float32),
+                torch.diag_embed(torch.ones((config.batch_size, config.state_dim), device=device, dtype=torch.float32)),
+            )
+            posteriors = encoder(observations)
+            posterior_samples = posteriors.rsample()
+            next_priors, _, _, _ = transition_model(
+                state_sample=posterior_samples,
+                action=actions,
+                state_dist=posteriors
+            )
+            next_prior_samples = next_priors.rsample()
+            next_posteriors = encoder(next_observations)
 
-        kl = kl_divergence(posteriors, priors)
-        kl_loss = kl.clamp(min=config.free_nats).mean()
+            kl = kl_divergence(posteriors, priors)
+            kl_loss = kl.clamp(min=config.free_nats).mean()
 
-        next_kl = kl_divergence(next_priors, next_posteriors)
-        next_kl_loss = next_kl.clamp(min=config.free_nats).mean()
+            next_kl = kl_divergence(next_priors, next_posteriors)
+            next_kl_loss = next_kl.clamp(min=config.free_nats).mean()
 
-        recon_observations = decoder(posterior_samples)
-        recon_next_observations = decoder(next_prior_samples)
+            recon_observations = decoder(posterior_samples)
+            recon_next_observations = decoder(next_prior_samples)
 
-        obs_loss = mse_loss(
-            recon_observations,
-            observations,
-        )
+            obs_loss = mse_loss(
+                recon_observations,
+                observations,
+            )
 
-        next_obs_loss = mse_loss(
-            recon_next_observations,
-            next_observations,
-        )
+            next_obs_loss = mse_loss(
+                recon_next_observations,
+                next_observations,
+            )
 
-        loss = obs_loss + next_obs_loss + config.kl_beta * next_kl_loss + kl_loss
-        optimizer.zero_grad()
-        loss.backward()
-        clip_grad_norm_(all_params, config.clip_grad_norm)
-        optimizer.step()
+            loss = obs_loss + next_obs_loss + config.kl_beta * next_kl_loss + kl_loss
+            optimizer.zero_grad()
+            loss.backward()
+            clip_grad_norm_(all_params, config.clip_grad_norm)
+            optimizer.step()
 
-        # print losses and add tensorboard
-        print('epoch: %3d loss: %.5f, kl_loss: %.5f, next_kl_loss: %.5f obs_loss: %.5f, next_obs_loss: %.5f'
-            % (epoch, loss.item(), kl_loss.item(), next_kl_loss.item(), obs_loss.item(), next_obs_loss.item())
-        )
+            total_idx = epoch * len(train_dataloader) + batch 
         
-        writer.add_scalar('overall loss', loss.item(), epoch)
-        writer.add_scalar('kl loss', kl_loss.item(), epoch)
-        writer.add_scalar('next_kl loss', next_kl_loss.item(), epoch)
-        writer.add_scalar('obs loss', obs_loss.item(), epoch)
-        writer.add_scalar('next obs loss', next_obs_loss.item(), epoch)
+            writer.add_scalar('overall loss train', loss.item(), total_idx)
+            writer.add_scalar('kl loss train', kl_loss.item(), total_idx)
+            writer.add_scalar('next_kl loss train', next_kl_loss.item(), total_idx)
+            writer.add_scalar('obs loss train', obs_loss.item(), total_idx)
+            writer.add_scalar('next obs loss train', next_obs_loss.item(), total_idx)
+
+        # test
+        encoder.eval()
+        decoder.eval()
+        transition_model.eval()
+
+        with torch.no_grad():
+
+            for batch, observations, actions, next_observations in enumerate(test_dataloader):
+
+                observations = observations.to(device)
+                actions = actions.to(device)
+                next_observations = next_observations.to(device)
+
+                priors = MultivariateNormal(
+                    torch.zeros((config.batch_size, config.state_dim), device=device, dtype=torch.float32),
+                    torch.diag_embed(torch.ones((config.batch_size, config.state_dim), device=device, dtype=torch.float32)),
+                )
+                posteriors = encoder(observations)
+                posterior_samples = posteriors.sample()
+                next_priors, _, _, _ = transition_model(
+                    state_sample=posterior_samples,
+                    action=actions,
+                    state_dist=posteriors
+                )
+                next_prior_samples = next_priors.sample()
+                next_posteriors = encoder(next_observations)
+
+                kl = kl_divergence(posteriors, priors)
+                kl_loss = kl.clamp(min=config.free_nats).mean()
+
+                next_kl = kl_divergence(next_priors, next_posteriors)
+                next_kl_loss = next_kl.clamp(min=config.free_nats).mean()
+
+                recon_observations = decoder(posterior_samples)
+                recon_next_observations = decoder(next_prior_samples)
+
+                obs_loss = mse_loss(
+                    recon_observations,
+                    observations,
+                )
+
+                next_obs_loss = mse_loss(
+                    recon_next_observations,
+                    next_observations,
+                )
+
+                total_idx = epoch * len(test_dataloader) + batch 
+            
+                writer.add_scalar('overall loss test', loss.item(), total_idx)
+                writer.add_scalar('kl loss test', kl_loss.item(), total_idx)
+                writer.add_scalar('next_kl loss test', next_kl_loss.item(), total_idx)
+                writer.add_scalar('obs loss test', obs_loss.item(), total_idx)
+                writer.add_scalar('next obs loss test', next_obs_loss.item(), total_idx)
 
      # save learned model parameters
     torch.save(encoder.state_dict(), log_dir / "encoder.pth")
