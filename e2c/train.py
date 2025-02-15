@@ -77,12 +77,14 @@ def train(
         train_dataset,
         batch_size=config.batch_size,
         shuffle=True,
+        drop_last=True,
     )
 
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=config.batch_size,
         shuffle=False,
+        drop_last=True,
     )
 
     # define models and optimizer
@@ -124,7 +126,7 @@ def train(
         encoder.train()
         decoder.train()
         transition_model.train()
-        for batch, observations, actions, next_observations in enumerate(train_dataloader):
+        for batch, (observations, actions, next_observations) in enumerate(train_dataloader):
 
             observations = observations.to(device)
             actions = actions.to(device)
@@ -184,7 +186,7 @@ def train(
 
         with torch.no_grad():
 
-            for batch, observations, actions, next_observations in enumerate(test_dataloader):
+            for batch, (observations, actions, next_observations) in enumerate(test_dataloader):
 
                 observations = observations.to(device)
                 actions = actions.to(device)

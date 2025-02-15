@@ -11,7 +11,6 @@ class TrainConfig:
     buffer_capacity: int = 1000000
     num_episodes: int = 100
     test_size: float = 0.2
-    test_every: int = 10
     num_epochs: int = 1024
     batch_size: int = 50
     lr: float = 1e-3
