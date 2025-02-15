@@ -224,9 +224,9 @@ def train(
                     recon_next_observations,
                     next_observations,
                 )
-
+                loss = obs_loss + next_obs_loss + config.kl_beta * next_kl_loss + kl_loss
                 total_idx = epoch * len(test_dataloader) + batch 
-            
+
                 writer.add_scalar('overall loss test', loss.item(), total_idx)
                 writer.add_scalar('kl loss test', kl_loss.item(), total_idx)
                 writer.add_scalar('next_kl loss test', next_kl_loss.item(), total_idx)
