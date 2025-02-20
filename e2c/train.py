@@ -5,6 +5,7 @@ import numpy as np
 import gymnasium as gym
 from pathlib import Path
 from datetime import datetime
+from tqdm.notebook import tqdm
 from torch.distributions.kl import kl_divergence
 from torch.nn.functional import mse_loss
 from torch.nn.utils import clip_grad_norm_
@@ -121,7 +122,7 @@ def train(
 
     optimizer = torch.optim.Adam(all_params, lr=config.lr, eps=config.eps)
 
-    for epoch in range(config.num_epochs):
+    for epoch in tqdm(range(config.num_epochs)):
         # train
         encoder.train()
         decoder.train()
